@@ -14,17 +14,18 @@ from amulet.api.selection import SelectionGroup
 from amulet.api.errors import ChunkLoadError, ChunkDoesNotExist
 import numpy as np
 
-# The namespace we want to remove
+# The block namespace used by Mounts of Mayhem: Dungeon Descent
 TARGET_NAMESPACE = "mc_hgd"
 
-# Replacement block per dimension
+# Maps dimensions to their appropriate filler block.
+# Any dimension not listed here falls back to DEFAULT_REPLACEMENT.
 DIMENSION_REPLACEMENTS = {
     "minecraft:the_nether": "netherrack",
     "minecraft:the_end":    "end_stone",
 }
-DEFAULT_REPLACEMENT = "stone"
+DEFAULT_REPLACEMENT = "stone"  # Used for the overworld and any unlisted dimensions
 
-
+# All three vanilla Minecraft dimensions to process
 DIMENSIONS = [
     "minecraft:overworld",
     "minecraft:the_nether",
@@ -47,6 +48,7 @@ def replace_mc_hgd(
     total_replaced = 0
 
     for dim in DIMENSIONS:
+        # Skip dimensions that haven't been generated in this world
         if dim not in world.dimensions:
             print(f"[mc_hgd Replacer] Skipping {dim} (not present in this world).")
             continue
@@ -67,35 +69,46 @@ def replace_mc_hgd(
             try:
                 chunk = world.get_chunk(cx, cz, dim)
             except (ChunkLoadError, ChunkDoesNotExist):
+                # Skip chunks that are corrupt or missing
                 continue
 
             chunk_modified = False
             palette = chunk.block_palette
 
+            # Find all palette indices that belong to the mc_hgd namespace.
+            # Chunks store blocks as indices into a palette, so we only need
+            # to scan the palette (usually <100 entries) rather than every block.
             mc_hgd_ids = set()
             for block_id, block in enumerate(palette):
                 if block.namespace == TARGET_NAMESPACE:
                     mc_hgd_ids.add(block_id)
 
+            # If this chunk has no mc_hgd blocks in its palette, skip it entirely
             if not mc_hgd_ids:
                 continue
 
+            # Get (or add) the replacement block's index in this chunk's palette
             replacement_id = palette.get_add_block(replacement_block)
 
+            # Iterate sub-chunks (16-block vertical slices) and replace in bulk using numpy
             blocks = chunk.blocks
             for sy in blocks.sub_chunks:
                 sub_chunk = blocks.get_sub_chunk(sy)
+
+                # Build a boolean mask of every position containing an mc_hgd block
                 mask = np.isin(sub_chunk, list(mc_hgd_ids))
                 if np.any(mask):
                     count = int(np.sum(mask))
-                    sub_chunk[mask] = replacement_id
+                    sub_chunk[mask] = replacement_id  # Replace all matches at once
                     blocks.add_sub_chunk(sy, sub_chunk)
                     replaced_count += count
                     chunk_modified = True
 
+            # Mark the chunk dirty so Amulet knows to save it
             if chunk_modified:
                 chunk.changed = True
 
+            # Print progress every 100 chunks to avoid spamming the log
             if chunk_count % 100 == 0:
                 print(f"[mc_hgd Replacer] [{dim}] Progress: {chunk_count}/{total} chunks scanned, {replaced_count} blocks replaced so far...")
 
@@ -106,6 +119,7 @@ def replace_mc_hgd(
     print("[mc_hgd Replacer] Don't forget to save the world in Amulet (Ctrl+S) before closing!")
 
 
+# Amulet reads this dict to register the plugin in the Operation tab
 export = {
     "name": "Replace mc_hgd Blocks (Whole World)",
     "operation": replace_mc_hgd,
