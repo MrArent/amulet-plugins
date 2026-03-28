@@ -25,6 +25,13 @@ DIMENSION_REPLACEMENTS = {
 DEFAULT_REPLACEMENT = "stone"
 
 
+DIMENSIONS = [
+    "minecraft:overworld",
+    "minecraft:the_nether",
+    "minecraft:the_end",
+]
+
+
 def replace_mc_hgd(
     world: BaseLevel,
     dimension: Dimension,
@@ -32,68 +39,70 @@ def replace_mc_hgd(
     options: dict,
 ):
     """
-    Iterates every chunk in the current dimension and replaces all mc_hgd
+    Iterates every chunk in all three dimensions and replaces all mc_hgd
     namespace blocks with the appropriate filler block:
       overworld -> stone, nether -> netherrack, end -> end_stone.
     """
 
-    replacement_name = DIMENSION_REPLACEMENTS.get(dimension, DEFAULT_REPLACEMENT)
-    replacement_block = Block("minecraft", replacement_name)
+    total_replaced = 0
 
-    # Get all chunk coordinates in the world
-    all_chunks = list(world.all_chunk_coords(dimension))
-    total = len(all_chunks)
-    replaced_count = 0
-    chunk_count = 0
-
-    print(f"[mc_hgd Replacer] Found {total} chunks to scan. Starting...")
-
-    for cx, cz in all_chunks:
-        chunk_count += 1
-
-        try:
-            chunk = world.get_chunk(cx, cz, dimension)
-        except (ChunkLoadError, ChunkDoesNotExist):
+    for dim in DIMENSIONS:
+        if dim not in world.dimensions:
+            print(f"[mc_hgd Replacer] Skipping {dim} (not present in this world).")
             continue
 
-        chunk_modified = False
+        replacement_name = DIMENSION_REPLACEMENTS.get(dim, DEFAULT_REPLACEMENT)
+        replacement_block = Block("minecraft", replacement_name)
 
-        # Get the block palette for this chunk
-        palette = chunk.block_palette
+        all_chunks = list(world.all_chunk_coords(dim))
+        total = len(all_chunks)
+        replaced_count = 0
+        chunk_count = 0
 
-        # Find all palette entries that belong to mc_hgd namespace
-        mc_hgd_ids = set()
-        for block_id, block in enumerate(palette):
-            if block.namespace == TARGET_NAMESPACE:
-                mc_hgd_ids.add(block_id)
+        print(f"[mc_hgd Replacer] [{dim}] Found {total} chunks to scan. Starting...")
 
-        # If no mc_hgd blocks found in this chunk's palette, skip it
-        if not mc_hgd_ids:
-            continue
+        for cx, cz in all_chunks:
+            chunk_count += 1
 
-        # Get the replacement block ID in this chunk's palette
-        replacement_id = palette.get_add_block(replacement_block)
+            try:
+                chunk = world.get_chunk(cx, cz, dim)
+            except (ChunkLoadError, ChunkDoesNotExist):
+                continue
 
-        # Iterate through all sub-chunks and replace matching block IDs
-        blocks = chunk.blocks
-        for sy in blocks.sub_chunks:
-            sub_chunk = blocks.get_sub_chunk(sy)
-            mask = np.isin(sub_chunk, list(mc_hgd_ids))
-            if np.any(mask):
-                count = int(np.sum(mask))
-                sub_chunk[mask] = replacement_id
-                blocks.add_sub_chunk(sy, sub_chunk)
-                replaced_count += count
-                chunk_modified = True
+            chunk_modified = False
+            palette = chunk.block_palette
 
-        if chunk_modified:
-            chunk.changed = True
+            mc_hgd_ids = set()
+            for block_id, block in enumerate(palette):
+                if block.namespace == TARGET_NAMESPACE:
+                    mc_hgd_ids.add(block_id)
 
-        # Progress update every 100 chunks
-        if chunk_count % 100 == 0:
-            print(f"[mc_hgd Replacer] Progress: {chunk_count}/{total} chunks scanned, {replaced_count} blocks replaced so far...")
+            if not mc_hgd_ids:
+                continue
 
-    print(f"[mc_hgd Replacer] Done! Scanned {total} chunks, replaced {replaced_count} mc_hgd blocks with minecraft:{replacement_name}.")
+            replacement_id = palette.get_add_block(replacement_block)
+
+            blocks = chunk.blocks
+            for sy in blocks.sub_chunks:
+                sub_chunk = blocks.get_sub_chunk(sy)
+                mask = np.isin(sub_chunk, list(mc_hgd_ids))
+                if np.any(mask):
+                    count = int(np.sum(mask))
+                    sub_chunk[mask] = replacement_id
+                    blocks.add_sub_chunk(sy, sub_chunk)
+                    replaced_count += count
+                    chunk_modified = True
+
+            if chunk_modified:
+                chunk.changed = True
+
+            if chunk_count % 100 == 0:
+                print(f"[mc_hgd Replacer] [{dim}] Progress: {chunk_count}/{total} chunks scanned, {replaced_count} blocks replaced so far...")
+
+        print(f"[mc_hgd Replacer] [{dim}] Done! Replaced {replaced_count} blocks with minecraft:{replacement_name}.")
+        total_replaced += replaced_count
+
+    print(f"[mc_hgd Replacer] All dimensions complete. Total blocks replaced: {total_replaced}.")
     print("[mc_hgd Replacer] Don't forget to save the world in Amulet (Ctrl+S) before closing!")
 
 
